@@ -1,111 +1,105 @@
 # scanner.py
 
-import asyncio
-from urllib.parse import urlparse
+import requests
+from concurrent.futures import ThreadPoolExecutor
 from endpoint_finder import discover_endpoints
-from js_route_extractor import extract_routes
-from spa_route_extractor import extract_spa_routes
-from js_param_extractor import extract_js_params
-from param_bruteforce import brute_params
 from subdomain_enum import discover_subdomains
 from sensitive_file_detector import detect_sensitive_files
-from async_crawler import crawl
 from payload_library import generate_payload_set
 from xss_detector import check_reflection
-from report import save_report
-from html_report import generate_html
+from async_crawler import crawl
 from url_normalizer import deduplicate
 from rate_limiter import RateLimiter
-from robots_sitemap_harvester import harvest_robots, harvest_sitemap
-from url_normalizer import deduplicate
+from urllib.parse import urlparse
+import asyncio
 
-# Global results dictionary
 results = {
-    "target": "",
+    "reflections": [],
     "pages": [],
-    "params": [],
     "subdomains": [],
-    "sensitive_files": [],
-    "reflections": []
+    "sensitive_files": []
 }
 
+
+def test_page(page, payloads, limiter):
+
+    for payload in payloads:
+
+        limiter.wait()
+
+        try:
+            url = f"{page}?q={payload}"
+
+            r = requests.get(url, timeout=5)
+
+            if check_reflection(payload, r.text):
+
+                print(f"[XSS REFLECTION] {url}")
+
+                results["reflections"].append(url)
+
+        except:
+            pass
+
+
 def main():
-    target = input("Enter target URL (e.g., https://example.com): ")
-    results["target"] = target
-    domain = urlparse(target).netloc
 
-    limiter = RateLimiter(1)
+    target = input("Enter target URL (e.g., https://example.com): ").strip()
 
-    # Start with a set of pages
-    pages = set()
+    limiter = RateLimiter(0.3)
+
+    print("\n[*] Endpoint discovery started")
+    pages = set(discover_endpoints(target))
+
     pages.add(target)
 
-    # Directory discovery
-    pages.update(discover_endpoints(target))
-
-    # Robots.txt + sitemap
-    pages.update(harvest_robots(target))
-    pages.update(harvest_sitemap(target))
-
-    # JS route extraction
-    pages.update(extract_routes(target))
-    pages.update(extract_spa_routes(target))
-
-    # Subdomain discovery
+    print("\n[*] Subdomain discovery started")
+    domain = urlparse(target).netloc
     subs = discover_subdomains(domain)
+
+    for s in subs:
+        print(f"[SUBDOMAIN FOUND] {s}")
+
     results["subdomains"] = subs
     pages.update(subs)
 
-    # Sensitive file detection
+    print("\n[*] Checking for sensitive files")
     sensitive = detect_sensitive_files(target)
+
+    for s in sensitive:
+        print(f"[SENSITIVE FILE FOUND] {s}")
+
     results["sensitive_files"] = sensitive
 
-    # Async crawl for more pages
-    discovered = asyncio.run(crawl(list(pages)))
-    pages.update(discovered)
+    print("\n[*] Crawling discovered pages")
+    crawled = asyncio.run(crawl(list(pages)))
 
-    # Deduplicate / normalize URLs
+    pages.update(crawled)
+
     pages = set(deduplicate(list(pages)))
-    results["pages"] = list(pages)
-    print(f"[*] Total pages discovered: {len(pages)}")
 
-    # Load payloads
+    results["pages"] = list(pages)
+
+    print(f"\n[*] Total pages discovered: {len(pages)}")
+
     payloads = generate_payload_set()
+
     print(f"[*] Payloads loaded: {len(payloads)}")
 
-    # Test URL parameters
-    for page in pages:
-        limiter.wait()  # respect rate limiting
-        params = brute_params(page)
-        if params:
-            results["params"].extend(params)
-        for payload in payloads:
-            test_url = f"{page}?q={payload}"
-            try:
-                import requests
-                r = requests.get(test_url, timeout=6)
-                if check_reflection(payload, r.text):
-                    print(f"[REFLECTION FOUND] {test_url}")
-                    results["reflections"].append(test_url)
-            except:
-                continue
+    print("\n[*] Starting XSS tests\n")
 
-    # Test forms (basic POST injection)
-    from forms import test_forms
-    for page in pages:
-        limiter.wait()
-        test_forms(page, payloads)
+    with ThreadPoolExecutor(max_workers=10) as executor:
 
-    # Extract JS parameters
-    for page in list(pages):
-        params = extract_js_params(page)
-        if params:
-            results["params"].extend(params)
+        for i, page in enumerate(pages):
 
-    # Save reports
-    save_report(results)
-    generate_html(results)
-    print("[*] Scan complete!")
+            print(f"[SCAN] {i+1}/{len(pages)} -> {page}")
+
+            executor.submit(test_page, page, payloads, limiter)
+
+    print("\n[*] Scan finished")
+
+    print(f"[+] Reflections found: {len(results['reflections'])}")
+
 
 if __name__ == "__main__":
     main()
