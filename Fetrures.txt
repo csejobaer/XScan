@@ -1,0 +1,25 @@
+✅ Features included:
+
+Directory & endpoint discovery (wordlist + JS + SPA routes)
+
+Robots.txt + sitemap parsing
+
+Subdomain enumeration
+
+Async crawling
+
+Parameter brute-forcing + JS parameter extraction
+
+Sensitive file detection (.env, .git, backups)
+
+URL normalization & deduplication
+
+Rate limiting to avoid WAF/blocks
+
+Payload engine with raw, HTML-encoded, URL-encoded, double-encoded, and context-aware payloads
+
+Form & URL XSS testing, including DOM sinks
+
+JS-rendered page testing (Selenium)
+
+JSON + HTML report generation
